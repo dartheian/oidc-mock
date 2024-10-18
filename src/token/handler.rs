@@ -12,9 +12,6 @@ use serde::Serialize;
 use std::collections::HashSet;
 use thiserror::Error;
 
-const EXPIRES_IN: u64 = 3600;
-const ISSUER: &str = "http://rain.okta1.com:1802";
-
 #[derive(Serialize)]
 pub struct TokenResponse {
     #[serde(serialize_with = "crate::serde_utils::jwt::serialize")]
@@ -51,24 +48,24 @@ pub async fn token(state: AppState, params: TokenParams) -> Result<impl IntoResp
     let auth_session = get_session(&state, params.code)?;
     verify_pkce(auth_session.code_challenge, params.code_verifier)?;
     verify_redirect_uri(auth_session.redirect_uri, params.redirect_uri)?;
-    let subject: Subject = state.random();
+    let subject: Subject = state.gen_random();
     let access_token = AccessToken {
         aud: auth_session.client_id.clone(),
-        exp: Expiration::new(60),
+        exp: Expiration::new(state.expiration()),
         iat: IssuedAt::new(),
-        iss: Uri::try_from(ISSUER).unwrap(),
+        iss: state.issuer(),
         sub: subject.clone(),
     };
     let id_token = IdToken {
         client_id: auth_session.client_id,
-        exp: Expiration::new(60),
+        exp: Expiration::new(state.expiration()),
         iat: IssuedAt::new(),
-        iss: Uri::try_from(ISSUER).unwrap(),
+        iss: state.issuer(),
         sub: subject,
     };
     Ok(Json(TokenResponse {
         access_token,
-        expires_in: EXPIRES_IN,
+        expires_in: state.expiration(),
         id_token,
         scope: auth_session.scope,
         token_type: TokenType::Bearer,
@@ -76,7 +73,9 @@ pub async fn token(state: AppState, params: TokenParams) -> Result<impl IntoResp
 }
 
 fn get_session(state: &AppState, code: Code) -> Result<AuthSession, InvalidParamError> {
-    state.get(&code).ok_or(InvalidParamError::Code(code))
+    state
+        .get_session(&code)
+        .ok_or(InvalidParamError::Code(code))
 }
 
 fn verify_pkce(challenge: CodeChallenge, verifier: CodeVerifier) -> Result<(), InvalidParamError> {
